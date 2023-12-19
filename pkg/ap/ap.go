@@ -40,6 +40,7 @@ func New(c *cli.Context) *Ap {
 
 func (a *Ap) StopDnsmasq() error {
 	if cmd := a.DnsMasqCmd(); cmd != nil {
+		logrus.Debug("stopping dnsmasq")
 		return cmd.Process.Signal(syscall.SIGTERM)
 	}
 	return nil
@@ -61,6 +62,7 @@ func (a *Ap) StartDnsmasq(ctx context.Context) error {
 		"--log-facility=-", // log to stderr
 	}
 
+	logrus.Debug(append([]string{"starting: dnsmasq"}, args...))
 	cmd := exec.CommandContext(ctx, "dnsmasq", args...)
 	err := cmd.Start()
 	if err != nil {
@@ -84,6 +86,7 @@ func (a *Ap) StartDnsmasq(ctx context.Context) error {
 
 func (a *Ap) StopWpaSupplicant() error {
 	if cmd := a.WpaCmd(); cmd != nil {
+		logrus.Debug("stopping wpa_supplicant")
 		return cmd.Process.Signal(os.Interrupt)
 	}
 	return nil
@@ -105,12 +108,15 @@ func (a *Ap) StartWpaSupplicant(ctx context.Context) error {
 		return nil
 	}
 
+	logrus.Debug("starting wpa_supplicant")
+
 	args := []string{
 		"-Dnl80211",
 		"-iwlan0",
 		"-c" + a.wpaSupplicantConfigFile,
 	}
 
+	logrus.Debug(append([]string{"starting: wpa_supplicant"}, args...))
 	cmd := exec.CommandContext(ctx, "wpa_supplicant", args...)
 	cmdReader, err := cmd.StdoutPipe()
 	if err != nil {
@@ -120,7 +126,7 @@ func (a *Ap) StartWpaSupplicant(ctx context.Context) error {
 	scanner := bufio.NewScanner(cmdReader)
 	go func() {
 		for scanner.Scan() {
-			fmt.Printf("wpa_supplicant said: %s\n", scanner.Text())
+			logrus.Infof("wpa_supplicant said: %s\n", scanner.Text())
 		}
 	}()
 	err = cmd.Start()
@@ -146,16 +152,6 @@ func (a *Ap) StartWpaSupplicant(ctx context.Context) error {
 	return err
 }
 
-// ConfiguredNetworks returns a list of configured wifi networks.
-func (a *Ap) ConfiguredNetworks(ctx context.Context) (string, error) {
-	netOut, err := exec.CommandContext(ctx, "wpa_cli", "-i", "wlan0", "scan").Output()
-	if err != nil {
-		return "", err
-	}
-
-	return string(netOut), nil
-}
-
 func (a *Ap) EnsureWpaNetworkAdded() (string, error) {
 
 	type row struct {
@@ -165,7 +161,7 @@ func (a *Ap) EnsureWpaNetworkAdded() (string, error) {
 	}
 	networks := []row{}
 
-	networkListOut, err := exec.Command("wpa_cli", "-i", "wlan0", "list_networks").Output()
+	networkListOut, err := commands.Run("wpa_cli", "-i", "wlan0", "list_networks")
 	if err != nil {
 		return "", err
 	}
@@ -214,7 +210,6 @@ func (a *Ap) ConnectToNetwork(ssid, key string) error {
 	if err != nil {
 		return err
 	}
-	logrus.Infof("set_network ssid: %s", response)
 
 	response, err = commands.Run("wpa_cli", "-i", "wlan0", "set_network", net, "psk", "\""+key+"\"")
 	if err != nil {
@@ -290,8 +285,6 @@ func (a *Ap) ScanNetworks() ([]*WpaNetwork, error) {
 		fields := strings.Fields(netRecord)
 
 		if len(fields) > 4 {
-			fmt.Println("networkListOut", fields)
-			fmt.Println("len", len(fields))
 			ssid := strings.Join(fields[4:], " ")
 			wpaNetworks = append(wpaNetworks, &WpaNetwork{
 				Bssid:       fields[0],

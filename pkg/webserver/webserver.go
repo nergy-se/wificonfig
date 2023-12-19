@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"text/template"
 	"time"
 
 	"github.com/fortnoxab/ginprometheus"
@@ -14,7 +13,12 @@ import (
 	"github.com/jonaz/ginlogrus"
 	"github.com/nergy-se/wificonfig/pkg/ap"
 	"github.com/sirupsen/logrus"
+
+	_ "embed"
 )
+
+//go:embed index.html
+var index []byte
 
 type Webserver struct {
 	Port string
@@ -40,10 +44,11 @@ func (ws *Webserver) Init() *gin.Engine {
 	}
 	router.Use(ginlogrus.New(logrus.StandardLogger(), logIgnorePaths...), gin.Recovery())
 
-	// router.GET("/", func(c *gin.Context) {
-	// 	fmt.Fprintf(c.Writer, `<a href="/machines">Machines</a>`)
-	// })
-	router.GET("/", err(ws.index))
+	router.GET("/", func(c *gin.Context) {
+		c.Writer.Header().Set("location", "/")
+		c.Data(http.StatusOK, "text/html; charset=utf-8", index)
+		c.Status(http.StatusFound)
+	})
 	router.GET("/generate_204", func(c *gin.Context) {
 		c.Writer.Header().Set("location", "/")
 		c.Status(http.StatusFound)
@@ -72,8 +77,6 @@ func (ws *Webserver) scan(c *gin.Context) error {
 		return fmt.Errorf("scanning for network failed")
 	}
 
-	fmt.Println("networks is", networks)
-
 	c.JSON(http.StatusOK, networks)
 	return nil
 }
@@ -96,119 +99,6 @@ func (ws *Webserver) connect(c *gin.Context) error {
 	}
 
 	return nil
-}
-
-func (ws *Webserver) index(c *gin.Context) error {
-	t := `<!DOCTYPE html>
-<html lang="en">
-<head>
-	<meta name="viewport" content="width=device-width, initial-scale=1.0">
-</head>
-<body style="margin:25px" onload="checkConnected()">
-<script>
-const checkConnected = async () => {
-  try {
-    const response = await fetch('/api/current-ssid-v1');
-    const data = await response.json();
-	console.log("data", data);
-
-	if ( response.status != 200){
-	document.getElementById("error").innerHTML = "Error: "+ data.error;
-		return;
-	}
-	document.getElementById("error").innerHTML = "";
-
-	if(data.ssid !== ""){
-	document.getElementById("h1").innerHTML = "Connected to: "+data.ssid;
-	}
-  } catch (error) {
-    console.error(error);
-  }
-}
-const connect = () =>  {
-
-	const ssid = document.getElementById('ssid').value;
-	const psk = document.getElementById('psk').value;
-    let options = {
-        method: "POST",
-        headers: {
-            "Content-Type":"application/json",
-        },
-		body: JSON.stringify({ssid: ssid, psk: psk})      
-    }
-    fetch("/api/connect-v1", options);
-}
-const scan = async () => {
-  try {
-	document.getElementById("data").innerHTML = '<tr><td colspan="4">Scanning now...</td></tr>';
-    const response = await fetch('/api/scan-v1');
-    const data = await response.json();
-	console.log("data", data);
-	var temp = "";
-
-	if ( response.status != 200){
-	document.getElementById("error").innerHTML = "Error: "+ data.error;
-		return;
-	}
-	document.getElementById("error").innerHTML = "";
-
-	data.forEach((x) => {
-		temp += "<tr>";
-		temp += "<td>" + x.ssid + "</td>";
-		temp += "<td>" + x.frequency + "</td>";
-		temp += "<td>" + x.signalLevel + "</td>";
-		temp += "<td><button onclick=\"event.preventDefault();document.getElementById('ssid').value='"+x.ssid+"';\";>Connect</button></td>";
-		temp += "</tr>"
-	});
-
-	document.getElementById("data").innerHTML = temp;
-  } catch (error) {
-    console.error(error);
-  }
-}
-</script>
-<h2 id="h1">Connect to wifi</h2>
-<form method="post" action="/test" id="myForm">
-  <label for="ssid">SSID:</label><br>
-  <input type="text" id="ssid" name="ssid"><br>
-  <label for="psk">Password:</label><br>
-  <input type="text" id="psk" name="psk"><br><br>
-  <input value="Connect" type="submit" onclick="event.preventDefault();connect();">
-</form>
-<button style="margin-top:20px;" onclick="event.preventDefault();scan();">Scan for networks</button>
-<div style="padding-top:10px;" >
-    <table class="table" border="0">
-        <thead>
-            <tr>
-                <th>SSID</th>
-                <th>Freq</th>
-                <th>Signal</th>
-                <th>Connect</th>
-            </tr>
-        </thead>
-        <tbody id="data"><tr><td colspan="4">Not scanned yet</td></tr></tbody>
-    </table>
-</div>
-	<h2 id="error" style="color:red"></h2>
-</body>
-</html>`
-
-	tmpl, err := template.New("index").Parse(t)
-	if err != nil {
-		return err
-	}
-
-	type host struct {
-		Name       string `json:"name"`
-		IP         string `json:"ip"`
-		Online     bool
-		Accepted   bool
-		Git        bool
-		LastUpdate time.Time
-	}
-	hostList := make(map[string]*host)
-
-	return tmpl.Execute(c.Writer, hostList)
 }
 
 func (ws *Webserver) Start(ctx context.Context) {

@@ -65,14 +65,13 @@ func (a *App) tickerLoop(ctx context.Context, d time.Duration) {
 func (a *App) reconcile(ctx context.Context) error {
 	alive, err := a.checkAlive()
 	if err != nil {
-		logrus.Error(err)
+		logrus.Error(fmt.Errorf("error checking alive: %w", err))
 	}
 
 	intName, _, err := GetActiveInterface()
 	if err != nil {
 		return err
 	}
-	fmt.Println("interface name", intName)
 
 	if alive && intName == a.EthernetInterfaceName { // ethernet connected and alive
 		err := a.ap.StopDnsmasq()
@@ -109,6 +108,7 @@ func (a *App) reconcile(ctx context.Context) error {
 		}
 
 		if hasIP, _, err := InterfaceHasIP(net.ParseIP(a.IP)); hasIP != "" && err == nil { // if we have our AP ip lets restart the network to get DHCP.
+			logrus.Debug("networkctl reconfigure wlan0")
 			_, err = commands.Run("networkctl", "reconfigure", "wlan0")
 			return err
 		}
@@ -128,6 +128,7 @@ func (a *App) reconcile(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
+		logrus.Debugf("ifconfig wlan0 %s", a.IP)
 		_, err = commands.Run("ifconfig", "wlan0", a.IP)
 		return err
 	}
