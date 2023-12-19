@@ -210,6 +210,7 @@ func (a *Ap) ConnectToNetwork(ssid, key string) error {
 	if err != nil {
 		return err
 	}
+	logrus.Infof("set_network ssid: %s", response)
 
 	response, err = commands.Run("wpa_cli", "-i", "wlan0", "set_network", net, "psk", "\""+key+"\"")
 	if err != nil {
@@ -247,7 +248,7 @@ func (a *Ap) ConnectToNetwork(ssid, key string) error {
 	}
 	logrus.Infof("reconfigure: %s", response)
 
-	return fmt.Errorf("could not connect to wifi")
+	return nil
 }
 
 type WpaNetwork struct {
