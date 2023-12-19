@@ -64,6 +64,16 @@ func app() *cli.App {
 			Usage: "default ip when in AP mode",
 		},
 		&cli.StringFlag{
+			Name:  "ap-ssid",
+			Value: "",
+			Usage: "ssid of the AP",
+		},
+		&cli.StringFlag{
+			Name:  "ap-psk",
+			Value: "",
+			Usage: "password of the AP",
+		},
+		&cli.StringFlag{
 			Name:  "dhcp-start",
 			Value: "192.168.27.100",
 			Usage: "dhcp start address",

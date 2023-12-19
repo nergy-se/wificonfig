@@ -2,9 +2,12 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/nergy-se/wificonfig/pkg/ap"
@@ -18,29 +21,77 @@ type App struct {
 	webserver *webserver.Webserver
 	ap        *ap.Ap
 
-	AliveURL              string
-	EthernetInterfaceName string
-	Interval              time.Duration
-	IP                    string
+	AliveURL                string
+	EthernetInterfaceName   string
+	Interval                time.Duration
+	IP                      string
+	wpaSupplicantConfigFile string
+	apssid                  string
+	appsk                   string
 }
 
 func NewApp(c *cli.Context, ws *webserver.Webserver, ap *ap.Ap) *App {
 	return &App{
-		webserver:             ws,
-		ap:                    ap,
-		AliveURL:              c.String("alive-url"),
-		Interval:              c.Duration("check-interval"),
-		EthernetInterfaceName: c.String("ethernet-interface"),
-		IP:                    c.String("ap-ip"),
+		webserver:               ws,
+		ap:                      ap,
+		AliveURL:                c.String("alive-url"),
+		Interval:                c.Duration("check-interval"),
+		EthernetInterfaceName:   c.String("ethernet-interface"),
+		IP:                      c.String("ap-ip"),
+		apssid:                  c.String("ap-ssid"),
+		appsk:                   c.String("ap-psk"),
+		wpaSupplicantConfigFile: c.String("wpa-supplicant-config"),
 	}
 }
 
 func (a *App) Start(ctx context.Context) error {
+	if a.apssid == "" {
+		return fmt.Errorf("missing config ap-ssid")
+	}
+	if a.appsk == "" {
+		return fmt.Errorf("missing config ap-psk")
+	}
+
+	err := a.ensureWpaConfig()
+	if err != nil {
+		return err
+	}
 
 	go a.tickerLoop(ctx, a.Interval)
 
 	a.webserver.Start(ctx)
 
+	return nil
+}
+
+func (a *App) ensureWpaConfig() error {
+	_, err := os.Stat(a.wpaSupplicantConfigFile)
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, os.ErrNotExist) {
+
+		// skapa fil
+		f, err := os.OpenFile(a.wpaSupplicantConfigFile, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0600)
+		if err != nil {
+			return err
+		}
+		io.WriteString(f, fmt.Sprintf(`ctrl_interface=/var/run/wpa_supplicant
+ctrl_interface_group=0
+update_config=1
+country=SE
+ap_scan=1
+
+network={
+	ssid="%s"
+	psk="%s"
+	key_mgmt=WPA-PSK
+	mode=2
+	frequency=2437
+}
+`, a.apssid, a.appsk))
+
+	}
 	return nil
 }
 
