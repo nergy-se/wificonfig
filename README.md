@@ -40,3 +40,5 @@ GLOBAL OPTIONS:
    --help, -h                     show help
    --version, -v                  print the version
 ```
+## Screenshot of web interface
+![2023-12-20-224754_515x642_scrot](https://github.com/nergy-se/wificonfig/assets/1146389/a4b084fa-162d-41f4-b805-d955de883449)
