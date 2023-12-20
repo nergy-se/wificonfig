@@ -3,11 +3,11 @@
 	<head>
 		<meta name="viewport" content="width=device-width, initial-scale=1.0">
 	</head>
-	<body style="margin:25px" onload="checkConnected()">
+	<body style="padding-left:25px" onload="checkConnected()">
 		<script>
 			const checkConnected = async () => {
 				try {
-					const response = await fetch('/api/current-ssid-v1');
+					const response = await fetch('/api/status-v1');
 					const data = await response.json();
 
 					if ( response.status != 200){
@@ -19,9 +19,62 @@
 					if(data.ssid !== ""){
 						document.getElementById("h1").innerHTML = "Connected to: "+data.ssid;
 					}
+
+					var temp = '';
+					data.interfaces.forEach((x) => {
+						if( !x.ips){
+							temp += "<tr>";
+							temp += "<td>" + x.name + "</td>";
+							temp += "<td>&lt;no address&gt;</td>";
+							temp += "<td>" + ( x.ethernet ? "<button onclick=\"event.preventDefault();promptSetEthernetIP('');\">Configure static IP</button>" : '' ) + "</td>";
+							temp += "</tr>"
+							return;
+						}
+						x.ips.forEach(x2 => {
+							temp += "<tr>";
+							temp += "<td>" + x.name + "</td>";
+							temp += "<td>" + x2 + "</td>";
+							let button = '';
+							if(x.static){
+								button = "<button style=\"margin-right:10px;\" onclick=\"event.preventDefault();promptSetEthernetIP('"+x2+"');\">Change static IP</button>";
+								button += "<button onclick=\"event.preventDefault();setEthernetIP('');\">Switch to DHCP</button>";
+							}
+							temp += "<td>"+button+"</td>";
+							temp += "</tr>"
+						})
+					});
+
+
+					document.getElementById("interfaces-table-body").innerHTML = temp;
 				} catch (error) {
 					console.error(error);
 				}
+			}
+			const promptSetEthernetIP = async (oldIP) =>  {
+				let ip = prompt("Enter IP in format 192.168.10.1/24", oldIP);
+				if( ip === null){
+					return; // pressed cancel
+				}
+				setEthernetIP(ip);
+			}
+			const setEthernetIP = async (ip) =>  {
+
+
+				let options = {
+					method: "POST",
+					headers: {
+						"Content-Type":"application/json",
+					},
+					body: JSON.stringify({ip: ip})      
+				}
+				const response = await fetch("/api/ethernet-v1", options);
+				const data = await response.json();
+				if ( response.status != 200){
+					document.getElementById("error").innerHTML = "Error: "+ data.error;
+					return;
+				}
+				document.getElementById("error").innerHTML = "";
+				checkConnected();
 			}
 			const connect = async () =>  {
 
@@ -70,6 +123,19 @@
 			}
 		</script>
 		<h2 id="h1">Connect to wifi</h2>
+		<div id="interfaces" style="" >
+			<h4 style="margin-bottom:0">Current IP addresses</h4>
+			<table style="width:500px" class="table" border="0">
+				<thead>
+					<tr>
+						<th></th>
+						<th></th>
+						<th></th>
+					</tr>
+				</thead>
+				<tbody id="interfaces-table-body"></tbody>
+			</table>
+		</div>
 		<form style="display:none;" method="post" action="/test" id="connectForm">
 			<label for="ssid">SSID:</label><br>
 			<input type="text" id="ssid" name="ssid"><br>
@@ -77,15 +143,15 @@
 			<input type="text" id="psk" name="psk"><br><br>
 			<input value="Connect" type="submit" onclick="event.preventDefault();connect();">
 		</form>
-		<button style="margin-top:20px;" onclick="event.preventDefault();scan();">Scan for networks</button>
-		<div style="padding-top:10px;" >
-			<table class="table" border="0">
+		<button style="margin-top:20px;" onclick="event.preventDefault();scan();">Scan for wifi networks</button>
+		<div style="padding-top:10px" >
+			<table style="width:400px" class="table" border="0">
 				<thead>
 					<tr>
-						<th>SSID</th>
-						<th>Freq</th>
-						<th>Signal</th>
-						<th>Connect</th>
+						<th style="text-align:left">SSID</th>
+						<th style="text-align:left">Freq</th>
+						<th style="text-align:left">Signal</th>
+						<th style="text-align:left"></th>
 					</tr>
 				</thead>
 				<tbody id="data"><tr><td colspan="4">Not scanned yet</td></tr></tbody>

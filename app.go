@@ -70,13 +70,11 @@ func (a *App) ensureWpaConfig() error {
 		return nil
 	}
 	if errors.Is(err, os.ErrNotExist) {
-
-		// skapa fil
 		f, err := os.OpenFile(a.wpaSupplicantConfigFile, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0600)
 		if err != nil {
 			return err
 		}
-		io.WriteString(f, fmt.Sprintf(`ctrl_interface=/var/run/wpa_supplicant
+		_, err = io.WriteString(f, fmt.Sprintf(`ctrl_interface=/var/run/wpa_supplicant
 ctrl_interface_group=0
 update_config=1
 country=SE
@@ -90,6 +88,7 @@ network={
 	frequency=2437
 }
 `, a.apssid, a.appsk))
+		return err
 
 	}
 	return nil
@@ -99,6 +98,10 @@ func (a *App) tickerLoop(ctx context.Context, d time.Duration) {
 
 	ticker := time.NewTicker(d)
 	logrus.Infof("Config OK. starting check loop for %s", d)
+	err := a.reconcile(ctx)
+	if err != nil {
+		logrus.Error(err)
+	}
 	for {
 		select {
 		case <-ticker.C:

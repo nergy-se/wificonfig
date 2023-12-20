@@ -2,8 +2,12 @@ package ap
 
 import (
 	"bufio"
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"io"
+	"net"
 	"os"
 	"os/exec"
 	"strings"
@@ -25,12 +29,14 @@ type Ap struct {
 	ip                      string
 	dhcpStart               string
 	dhcpEnd                 string
+	EthernetInterfaceName   string
 
 	mutex sync.Mutex
 }
 
 func New(c *cli.Context) *Ap {
 	return &Ap{
+		EthernetInterfaceName:   c.String("ethernet-interface"),
 		wpaSupplicantConfigFile: c.String("wpa-supplicant-config"),
 		ip:                      c.String("ap-ip"),
 		dhcpStart:               c.String("dhcp-start"),
@@ -361,4 +367,73 @@ func (a *Ap) GetConnectedSSID() (string, error) {
 		}
 	}
 	return "", nil
+}
+
+func (a *Ap) EnsureEthernetStaticIP(ipWithMask string) error {
+	ipWithMask = strings.TrimSpace(ipWithMask)
+	fn := "/etc/systemd/network/10-wificonfig-wired.network"
+
+	writeConfigToFile := func() error {
+		_, _, err := net.ParseCIDR(ipWithMask) // check valid syntax ip/mask for systemd-networkd config
+		if err != nil {
+			return err
+		}
+		f, err := os.OpenFile(fn, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0644)
+		if err != nil {
+			return err
+		}
+		_, err = io.WriteString(f, fmt.Sprintf(`[Match]
+Name=%s
+
+[Network]
+Address=%s
+`, a.EthernetInterfaceName, ipWithMask))
+		if err != nil {
+			return err
+		}
+
+		_, err = commands.Run("networkctl", "reload")
+		return err
+	}
+
+	_, err := os.Stat(fn)
+	if err == nil { // file exists check that it contains our IP otherwise override it.
+
+		if ipWithMask == "" { //unconfigure it if it exists and we get call with empty ip.
+			err := os.Remove(fn)
+			if err != nil {
+				return err
+			}
+			_, err = commands.Run("networkctl", "reload")
+			return err
+		}
+
+		f, err := os.Open(fn)
+		if err != nil {
+			return err
+		}
+
+		scanner := bufio.NewScanner(f)
+		if err != nil {
+			panic(err)
+		}
+		defer f.Close()
+
+		toFind := []byte("Address=" + ipWithMask)
+
+		for scanner.Scan() {
+			if bytes.Contains(scanner.Bytes(), toFind) {
+				return nil // file contains correct IP
+			}
+		}
+
+		return writeConfigToFile()
+	}
+
+	if errors.Is(err, os.ErrNotExist) {
+		return writeConfigToFile()
+	} else {
+		return err
+	}
+
 }
