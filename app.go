@@ -229,7 +229,7 @@ func GetOutboundIP() (net.IP, error) {
 }
 
 var aliveClient = &http.Client{
-	Timeout: time.Second * 1,
+	Timeout: time.Second * 10,
 }
 
 func (a *App) checkAlive() (bool, error) {
