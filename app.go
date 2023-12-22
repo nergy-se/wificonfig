@@ -122,12 +122,12 @@ func (a *App) reconcile(ctx context.Context) error {
 		logrus.Error(fmt.Errorf("error checking alive: %w", err))
 	}
 
-	intName, _, err := GetActiveInterface()
+	activeInt, _, err := GetActiveInterface()
 	if err != nil {
 		return err
 	}
 
-	if alive && intName == a.EthernetInterfaceName { // ethernet connected and alive
+	if alive && activeInt != nil && activeInt.Name == a.EthernetInterfaceName { // ethernet connected and alive
 		err := a.ap.StopDnsmasq()
 		if err != nil {
 			return err
@@ -157,12 +157,7 @@ func (a *App) reconcile(ctx context.Context) error {
 			return err
 		}
 
-		if alive {
-			return nil
-		}
-
-		if hasIP, _, err := InterfaceHasIP(net.ParseIP(a.IP)); hasIP != "" && err == nil { // if we have our AP ip lets restart the network to get DHCP.
-			logrus.Debug("networkctl reconfigure wlan0")
+		if int, _, err := InterfaceHasIP(net.ParseIP(a.IP)); int != nil && err == nil && int.Name == "wlan0" { // if we have our AP ip lets restart the network to get DHCP.
 			_, err = commands.Run("networkctl", "reconfigure", "wlan0")
 			return err
 		}
@@ -182,7 +177,6 @@ func (a *App) reconcile(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		logrus.Debugf("ifconfig wlan0 %s", a.IP)
 		_, err = commands.Run("ifconfig", "wlan0", a.IP)
 		return err
 	}
@@ -190,35 +184,35 @@ func (a *App) reconcile(ctx context.Context) error {
 	return nil
 }
 
-func GetActiveInterface() (string, net.IP, error) {
+func GetActiveInterface() (*net.Interface, net.IP, error) {
 	outboundIP, err := GetOutboundIP()
 	if err != nil {
-		return "", nil, nil // we ignore if we get for example connect: network is unreachable
+		return nil, nil, nil // we ignore if we get for example connect: network is unreachable
 	}
 	return InterfaceHasIP(outboundIP)
 }
 
-func InterfaceHasIP(expectedIP net.IP) (string, net.IP, error) {
+func InterfaceHasIP(expectedIP net.IP) (*net.Interface, net.IP, error) {
 	interfaces, err := net.Interfaces()
 	if err != nil {
-		return "", nil, err
+		return nil, nil, err
 	}
 	for _, i := range interfaces {
 		addrs, err := i.Addrs()
 		if err != nil {
-			return "", nil, err
+			return nil, nil, err
 		}
 		for _, a := range addrs {
 			ip, _, err := net.ParseCIDR(a.String())
 			if err != nil {
-				return "", nil, err
+				return nil, nil, err
 			}
 			if ip.Equal(expectedIP) {
-				return i.Name, ip, nil
+				return &i, ip, nil
 			}
 		}
 	}
-	return "", nil, fmt.Errorf("found no interface")
+	return nil, nil, fmt.Errorf("found no interface")
 
 }
 
