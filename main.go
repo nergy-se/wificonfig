@@ -59,6 +59,11 @@ func app() *cli.App {
 			Usage: "wpa_supplicant config location",
 		},
 		&cli.StringFlag{
+			Name:  "wired-static-config-location",
+			Value: "/etc/systemd/network/10-wificonfig-wired.network",
+			Usage: "config where to save static ethernet interface config when configured using the web portal",
+		},
+		&cli.StringFlag{
 			Name:  "ap-ip",
 			Value: "192.168.27.1",
 			Usage: "default ip when in AP mode",
@@ -97,7 +102,7 @@ func app() *cli.App {
 
 	app.Action = func(c *cli.Context) error {
 		ap := ap.New(c)
-		ws := webserver.New(c.String("listen-port"), ap)
+		ws := webserver.New(c.String("listen-port"), ap, c.String("wired-static-config-location"))
 		app := NewApp(c, ws, ap)
 		return app.Start(c.Context)
 	}

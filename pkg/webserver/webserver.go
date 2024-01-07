@@ -23,14 +23,16 @@ import (
 var index []byte
 
 type Webserver struct {
-	Port string
-	ap   *ap.Ap
+	Port                      string
+	ap                        *ap.Ap
+	wiredStaticConfigLocation string
 }
 
-func New(port string, ap *ap.Ap) *Webserver {
+func New(port string, ap *ap.Ap, wiredStaticConfigLocation string) *Webserver {
 	return &Webserver{
-		Port: port,
-		ap:   ap,
+		Port:                      port,
+		ap:                        ap,
+		wiredStaticConfigLocation: wiredStaticConfigLocation,
 	}
 }
 
@@ -81,7 +83,7 @@ func (ws *Webserver) Init() *gin.Engine {
 			iface := &Interface{Name: i.Name, Ethernet: i.Name == ws.ap.EthernetInterfaceName}
 			if i.Name == ws.ap.EthernetInterfaceName {
 				iface.Ethernet = true
-				_, err := os.Stat("/etc/systemd/network/10-wificonfig-wired.network")
+				_, err := os.Stat(ws.wiredStaticConfigLocation)
 				if err == nil {
 					iface.Static = true
 				}

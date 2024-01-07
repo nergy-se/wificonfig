@@ -2,12 +2,17 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/nergy-se/wificonfig/pkg/ap"
@@ -21,26 +26,28 @@ type App struct {
 	webserver *webserver.Webserver
 	ap        *ap.Ap
 
-	AliveURL                string
-	EthernetInterfaceName   string
-	Interval                time.Duration
-	IP                      string
-	wpaSupplicantConfigFile string
-	apssid                  string
-	appsk                   string
+	AliveURL                  string
+	EthernetInterfaceName     string
+	Interval                  time.Duration
+	IP                        string
+	wpaSupplicantConfigFile   string
+	apssid                    string
+	appsk                     string
+	wiredStaticConfigLocation string
 }
 
 func NewApp(c *cli.Context, ws *webserver.Webserver, ap *ap.Ap) *App {
 	return &App{
-		webserver:               ws,
-		ap:                      ap,
-		AliveURL:                c.String("alive-url"),
-		Interval:                c.Duration("check-interval"),
-		EthernetInterfaceName:   c.String("ethernet-interface"),
-		IP:                      c.String("ap-ip"),
-		apssid:                  c.String("ap-ssid"),
-		appsk:                   c.String("ap-psk"),
-		wpaSupplicantConfigFile: c.String("wpa-supplicant-config"),
+		webserver:                 ws,
+		ap:                        ap,
+		AliveURL:                  c.String("alive-url"),
+		Interval:                  c.Duration("check-interval"),
+		EthernetInterfaceName:     c.String("ethernet-interface"),
+		IP:                        c.String("ap-ip"),
+		apssid:                    c.String("ap-ssid"),
+		appsk:                     c.String("ap-psk"),
+		wpaSupplicantConfigFile:   c.String("wpa-supplicant-config"),
+		wiredStaticConfigLocation: c.String("wired-static-config-location"),
 	}
 }
 
@@ -116,10 +123,69 @@ func (a *App) tickerLoop(ctx context.Context, d time.Duration) {
 		}
 	}
 }
+
+func (a *App) syncStaticConfigIfNeeded() error {
+	if strings.HasPrefix(a.wiredStaticConfigLocation, "/etc/systemd/network") {
+		return nil // we already have config in correct location no need to sync it to /etc/systemd/network
+	}
+
+	dstFn := filepath.Join("/etc/systemd/network", filepath.Base(a.wiredStaticConfigLocation))
+
+	srcHash, err := hash(a.wiredStaticConfigLocation)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) { // if the config files does not exist we should remove the destination
+			err := os.Remove(dstFn)
+			if err != nil {
+				if errors.Is(err, fs.ErrNotExist) {
+					return nil // file is already removed
+				}
+				return err
+			}
+
+			_, err = commands.Run("networkctl", "reload")
+			return err
+		}
+		return err
+	}
+
+	dstHash, err := hash(dstFn)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+
+	if dstHash == srcHash {
+		return nil // nothing to do files are the same.
+	}
+
+	srcFile, err := os.Open(a.wiredStaticConfigLocation)
+	if err != nil {
+		return err
+	}
+	defer srcFile.Close()
+
+	dstFile, err := os.OpenFile(dstFn, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0644)
+	if err != nil {
+		return err
+	}
+	defer dstFile.Close()
+
+	_, err = io.Copy(dstFile, srcFile)
+	if err != nil {
+		return err
+	}
+
+	_, err = commands.Run("networkctl", "reload")
+	return err
+}
 func (a *App) reconcile(ctx context.Context) error {
 	alive, err := a.checkAlive()
 	if err != nil {
 		logrus.Error(fmt.Errorf("error checking alive: %w", err))
+	}
+
+	err = a.syncStaticConfigIfNeeded()
+	if err != nil {
+		logrus.Warn(err)
 	}
 
 	activeInt, _, err := GetActiveInterface()
@@ -239,4 +305,20 @@ func (a *App) checkAlive() (bool, error) {
 	}
 
 	return r.StatusCode == 200, nil
+}
+
+func hash(r string) (string, error) {
+	h := sha256.New()
+
+	f, err := os.Open(r)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	sum := hex.EncodeToString(h.Sum(nil))
+	return sum, nil
 }

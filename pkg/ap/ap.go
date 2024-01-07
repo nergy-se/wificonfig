@@ -10,6 +10,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
@@ -25,22 +26,24 @@ type Ap struct {
 	dnsmasq       *exec.Cmd
 	wpasupplicant *exec.Cmd
 
-	wpaSupplicantConfigFile string
-	ip                      string
-	dhcpStart               string
-	dhcpEnd                 string
-	EthernetInterfaceName   string
+	wpaSupplicantConfigFile   string
+	ip                        string
+	dhcpStart                 string
+	dhcpEnd                   string
+	EthernetInterfaceName     string
+	wiredStaticConfigLocation string
 
 	mutex sync.Mutex
 }
 
 func New(c *cli.Context) *Ap {
 	return &Ap{
-		EthernetInterfaceName:   c.String("ethernet-interface"),
-		wpaSupplicantConfigFile: c.String("wpa-supplicant-config"),
-		ip:                      c.String("ap-ip"),
-		dhcpStart:               c.String("dhcp-start"),
-		dhcpEnd:                 c.String("dhcp-end"),
+		EthernetInterfaceName:     c.String("ethernet-interface"),
+		wpaSupplicantConfigFile:   c.String("wpa-supplicant-config"),
+		ip:                        c.String("ap-ip"),
+		dhcpStart:                 c.String("dhcp-start"),
+		dhcpEnd:                   c.String("dhcp-end"),
+		wiredStaticConfigLocation: c.String("wired-static-config-location"),
 	}
 }
 
@@ -371,9 +374,9 @@ func (a *Ap) GetConnectedSSID() (string, error) {
 
 func (a *Ap) EnsureEthernetStaticIP(ipWithMask string) error {
 	ipWithMask = strings.TrimSpace(ipWithMask)
-	fn := "/etc/systemd/network/10-wificonfig-wired.network"
+	fn := a.wiredStaticConfigLocation
 
-	writeConfigToFile := func() error {
+	writeConfigToFile := func(fn string) error {
 		_, _, err := net.ParseCIDR(ipWithMask) // check valid syntax ip/mask for systemd-networkd config
 		if err != nil {
 			return err
@@ -382,14 +385,31 @@ func (a *Ap) EnsureEthernetStaticIP(ipWithMask string) error {
 		if err != nil {
 			return err
 		}
-		_, err = io.WriteString(f, fmt.Sprintf(`[Match]
+		defer f.Close()
+		content := fmt.Sprintf(`[Match]
 Name=%s
 
 [Network]
 Address=%s
-`, a.EthernetInterfaceName, ipWithMask))
+`, a.EthernetInterfaceName, ipWithMask)
+		_, err = io.WriteString(f, content)
 		if err != nil {
 			return err
+		}
+
+		// Also write copy to systemd folder if we dont already have that configured.
+		// used when the rootfs is overwritten by an upgrade.
+		if !strings.HasPrefix(a.wiredStaticConfigLocation, "/etc/systemd/network") {
+			dstFn := filepath.Join("/etc/systemd/network", filepath.Base(a.wiredStaticConfigLocation))
+			f, err := os.OpenFile(dstFn, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0644)
+			if err != nil {
+				return err
+			}
+			defer f.Close()
+			_, err = io.WriteString(f, content)
+			if err != nil {
+				return err
+			}
 		}
 
 		_, err = commands.Run("networkctl", "reload")
@@ -404,6 +424,8 @@ Address=%s
 			if err != nil {
 				return err
 			}
+			dstFn := filepath.Join("/etc/systemd/network", filepath.Base(a.wiredStaticConfigLocation))
+			_ = os.Remove(dstFn) // just ignore the error
 			_, err = commands.Run("networkctl", "reload")
 			return err
 		}
@@ -427,11 +449,11 @@ Address=%s
 			}
 		}
 
-		return writeConfigToFile()
+		return writeConfigToFile(fn)
 	}
 
 	if errors.Is(err, os.ErrNotExist) {
-		return writeConfigToFile()
+		return writeConfigToFile(fn)
 	} else {
 		return err
 	}
