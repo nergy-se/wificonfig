@@ -17,7 +17,7 @@
 					document.getElementById("error").innerHTML = "";
 
 					if(data.ssid !== ""){
-						document.getElementById("h1").innerHTML = "Connected to: "+data.ssid;
+						document.getElementById("h1").innerHTML = "Connected to: "+ data.ssid;
 					}
 
 					var temp = '';
@@ -37,7 +37,7 @@
 							let button = '';
 							if(x.static){
 								button = "<button style=\"margin-right:10px;\" onclick=\"event.preventDefault();promptSetEthernetIP('"+x2+"');\">Change static IP</button>";
-								button += "<button onclick=\"event.preventDefault();setEthernetIP('');\">Switch to DHCP</button>";
+								button += "<button onclick=\"event.preventDefault();setEthernetIP('', '', '', '');\">Switch to DHCP</button>";
 							}
 							temp += "<td>"+button+"</td>";
 							temp += "</tr>"
@@ -50,22 +50,29 @@
 					console.error(error);
 				}
 			}
-			const promptSetEthernetIP = async (oldIP) =>  {
-				let ip = prompt("Enter IP in format 192.168.10.1/24", oldIP);
-				if( ip === null){
-					return; // pressed cancel
-				}
-				setEthernetIP(ip);
+			const promptSetEthernetIP = (ip) =>  {
+				document.getElementById('ip').value=ip;
+				document.getElementById('staticIpForm').style.display = 'block';
 			}
-			const setEthernetIP = async (ip) =>  {
-
-
+			const saveIP = () =>  {
+				const ip = document.getElementById('ip').value;
+				const gateway = document.getElementById('gateway').value;
+				const dns1 = document.getElementById('dns1').value;
+				const dns2 = document.getElementById('dns2').value;
+				setEthernetIP(ip, gateway, dns1, dns2);
+			}
+			const setEthernetIP = async (ip, gateway, dns1, dns2) =>  {
 				let options = {
 					method: "POST",
 					headers: {
 						"Content-Type":"application/json",
 					},
-					body: JSON.stringify({ip: ip})      
+					body: JSON.stringify({
+						ip: ip,
+						gateway: gateway,
+						dns1: dns1,
+						dns2: dns2,
+					})
 				}
 				const response = await fetch("/api/ethernet-v1", options);
 				const data = await response.json();
@@ -74,6 +81,7 @@
 					return;
 				}
 				document.getElementById("error").innerHTML = "";
+				document.getElementById('staticIpForm').style.display = 'none';
 				checkConnected();
 			}
 			const connect = async () =>  {
@@ -93,6 +101,7 @@
 					document.getElementById("error").innerHTML = "Error: "+ data.error;
 					return;
 				}
+				document.getElementById("error").innerHTML = "";
 			}
 			const scan = async () => {
 				try {
@@ -142,6 +151,17 @@
 			<label for="psk">Password:</label><br>
 			<input type="text" id="psk" name="psk"><br><br>
 			<input value="Connect" type="submit" onclick="event.preventDefault();connect();">
+		</form>
+		<form style="display:none;" method="post" action="/test" id="staticIpForm">
+			<label for="ip">ip:</label><br>
+			<input type="text" id="ip" name="ip"><br>
+			<label for="gateway">Gateway:</label><br>
+			<input type="text" id="gateway" name="gateway"><br><br>
+			<label for="dns1">DNS1:</label><br>
+			<input type="text" id="dns1" name="dns1"><br><br>
+			<label for="dns2">DNS2:</label><br>
+			<input type="text" id="dns2" name="dns2"><br><br>
+			<input value="Save IP configuration" type="submit" onclick="event.preventDefault();saveIP();">
 		</form>
 		<button style="margin-top:20px;" onclick="event.preventDefault();scan();">Scan for wifi networks</button>
 		<div style="padding-top:10px" >

@@ -2,7 +2,6 @@ package ap
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -372,15 +371,36 @@ func (a *Ap) GetConnectedSSID() (string, error) {
 	return "", nil
 }
 
-func (a *Ap) EnsureEthernetStaticIP(ipWithMask string) error {
+func (a *Ap) EnsureEthernetStaticIP(ipWithMask, gateway, dns1, dns2 string) error {
 	ipWithMask = strings.TrimSpace(ipWithMask)
+	gateway = strings.TrimSpace(gateway)
+	dns1 = strings.TrimSpace(dns1)
+	dns2 = strings.TrimSpace(dns2)
+
 	fn := a.wiredStaticConfigLocation
 
+	_, _, err := net.ParseCIDR(ipWithMask) // check valid syntax ip/mask for systemd-networkd config
+	if err != nil {
+		return err
+	}
+
+	var stringsToConfigure []string
+
+	if ipWithMask != "" {
+		stringsToConfigure = append(stringsToConfigure, "Address="+ipWithMask)
+	}
+	if gateway != "" {
+		stringsToConfigure = append(stringsToConfigure, "Gateway="+gateway)
+	}
+	if dns1 != "" {
+		stringsToConfigure = append(stringsToConfigure, "DNS="+dns1)
+	}
+	if dns2 != "" {
+		stringsToConfigure = append(stringsToConfigure, "DNS="+dns2)
+	}
+
 	writeConfigToFile := func(fn string) error {
-		_, _, err := net.ParseCIDR(ipWithMask) // check valid syntax ip/mask for systemd-networkd config
-		if err != nil {
-			return err
-		}
+
 		f, err := os.OpenFile(fn, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0644)
 		if err != nil {
 			return err
@@ -390,8 +410,12 @@ func (a *Ap) EnsureEthernetStaticIP(ipWithMask string) error {
 Name=%s
 
 [Network]
-Address=%s
-`, a.EthernetInterfaceName, ipWithMask)
+`, a.EthernetInterfaceName)
+
+		for _, line := range stringsToConfigure {
+			content += line + "\n"
+		}
+
 		_, err = io.WriteString(f, content)
 		if err != nil {
 			return err
@@ -401,12 +425,12 @@ Address=%s
 		// used when the rootfs is overwritten by an upgrade.
 		if !strings.HasPrefix(a.wiredStaticConfigLocation, "/etc/systemd/network") {
 			dstFn := filepath.Join("/etc/systemd/network", filepath.Base(a.wiredStaticConfigLocation))
-			f, err := os.OpenFile(dstFn, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0644)
+			file, err := os.OpenFile(dstFn, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0644)
 			if err != nil {
 				return err
 			}
-			defer f.Close()
-			_, err = io.WriteString(f, content)
+			defer file.Close()
+			_, err = io.WriteString(file, content)
 			if err != nil {
 				return err
 			}
@@ -416,11 +440,11 @@ Address=%s
 		return err
 	}
 
-	_, err := os.Stat(fn)
+	_, err = os.Stat(fn)
 	if err == nil { // file exists check that it contains our IP otherwise override it.
 
 		if ipWithMask == "" { //unconfigure it if it exists and we get call with empty ip.
-			err := os.Remove(fn)
+			err = os.Remove(fn)
 			if err != nil {
 				return err
 			}
@@ -430,26 +454,19 @@ Address=%s
 			return err
 		}
 
-		f, err := os.Open(fn)
+		var content []byte
+		content, err = os.ReadFile(fn)
 		if err != nil {
 			return err
 		}
 
-		scanner := bufio.NewScanner(f)
-		if err != nil {
-			panic(err)
-		}
-		defer f.Close()
-
-		toFind := []byte("Address=" + ipWithMask)
-
-		for scanner.Scan() {
-			if bytes.Contains(scanner.Bytes(), toFind) {
-				return nil // file contains correct IP
+		for _, lookFor := range stringsToConfigure {
+			if !strings.Contains(string(content), lookFor) {
+				return writeConfigToFile(fn)
 			}
 		}
 
-		return writeConfigToFile(fn)
+		return nil
 	}
 
 	if errors.Is(err, os.ErrNotExist) {

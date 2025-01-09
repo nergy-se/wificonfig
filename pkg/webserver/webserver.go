@@ -59,11 +59,10 @@ func (ws *Webserver) Init() *gin.Engine {
 		c.Status(http.StatusFound)
 	})
 	router.GET("/api/scan-v1", err(ws.scan))
-	router.GET("/api/status-v1", func(c *gin.Context) {
-
+	router.GET("/api/status-v1", err(func(c *gin.Context) error {
 		interfaces, err := net.Interfaces()
 		if err != nil {
-			return
+			return err
 		}
 
 		type Interface struct {
@@ -73,6 +72,7 @@ func (ws *Webserver) Init() *gin.Engine {
 			IPs      []string `json:"ips"`
 		}
 
+		//TODO add more info about static config? perhaps all info is from networkctl status --json pretty
 		list := []*Interface{}
 
 		for _, i := range interfaces {
@@ -90,7 +90,7 @@ func (ws *Webserver) Init() *gin.Engine {
 			}
 			addrs, err := i.Addrs()
 			if err != nil {
-				return
+				return err
 			}
 
 			for _, ad := range addrs {
@@ -104,14 +104,15 @@ func (ws *Webserver) Init() *gin.Engine {
 		}
 		ssid, err := ws.ap.GetConnectedSSID()
 		if err != nil {
-			logrus.Error(err)
+			logrus.Error(err) // TODO check if we can return here
 		}
 
 		c.JSON(http.StatusOK, gin.H{
 			"ssid":       ssid,
 			"interfaces": list,
 		})
-	})
+		return nil
+	}))
 	router.POST("/api/connect-v1", err(ws.connect))
 	router.POST("/api/ethernet-v1", err(ws.configureEthernetIP))
 
@@ -131,7 +132,10 @@ func (ws *Webserver) scan(c *gin.Context) error {
 }
 func (ws *Webserver) configureEthernetIP(c *gin.Context) error {
 	type respStruct struct {
-		IP string
+		IP      string
+		Gateway string
+		DNS1    string
+		DNS2    string
 	}
 	resp := &respStruct{}
 	err := c.BindJSON(resp)
@@ -139,7 +143,7 @@ func (ws *Webserver) configureEthernetIP(c *gin.Context) error {
 		return err
 	}
 
-	err = ws.ap.EnsureEthernetStaticIP(resp.IP)
+	err = ws.ap.EnsureEthernetStaticIP(resp.IP, resp.Gateway, resp.DNS1, resp.DNS2)
 
 	if err != nil {
 		return err
