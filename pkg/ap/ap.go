@@ -460,8 +460,17 @@ Name=%s
 			return err
 		}
 
+		lines := strings.Split(string(content), "\n")
+
 		for _, lookFor := range stringsToConfigure {
-			if !strings.Contains(string(content), lookFor) {
+			found := false
+			for _, line := range lines {
+				if line == lookFor {
+					found = true
+					break
+				}
+			}
+			if !found {
 				return writeConfigToFile(fn)
 			}
 		}
