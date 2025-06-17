@@ -371,11 +371,12 @@ func (a *Ap) GetConnectedSSID() (string, error) {
 	return "", nil
 }
 
-func (a *Ap) EnsureEthernetStaticIP(ipWithMask, gateway, dns1, dns2 string) error {
+func (a *Ap) EnsureEthernetStaticIP(ipWithMask, gateway, dns1, dns2, ntp string) error {
 	ipWithMask = strings.TrimSpace(ipWithMask)
 	gateway = strings.TrimSpace(gateway)
 	dns1 = strings.TrimSpace(dns1)
 	dns2 = strings.TrimSpace(dns2)
+	ntp = strings.TrimSpace(ntp)
 
 	fn := a.wiredStaticConfigLocation
 
@@ -397,6 +398,9 @@ func (a *Ap) EnsureEthernetStaticIP(ipWithMask, gateway, dns1, dns2 string) erro
 	}
 	if dns2 != "" {
 		stringsToConfigure = append(stringsToConfigure, "DNS="+dns2)
+	}
+	if ntp != "" {
+		stringsToConfigure = append(stringsToConfigure, "NTP="+ntp)
 	}
 
 	writeConfigToFile := func(fn string) error {

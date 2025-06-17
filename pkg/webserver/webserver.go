@@ -72,7 +72,11 @@ func (ws *Webserver) Init() *gin.Engine {
 			IPs      []string `json:"ips"`
 		}
 
-		//TODO add more info about static config? perhaps all info is from networkctl status --json pretty
+		//TODO add more info about static config? perhaps all info is from networkctl status --json short
+		// ADD info about: DNS1 DNS2 NTP GATEWAY
+		// gatway is in ROUTES key with destination 0.0.0.0
+		// DNS is in interfaces list key "DNS"
+		// NTP s in NTP.Server key
 		list := []*Interface{}
 
 		for _, i := range interfaces {
@@ -136,6 +140,7 @@ func (ws *Webserver) configureEthernetIP(c *gin.Context) error {
 		Gateway string
 		DNS1    string
 		DNS2    string
+		NTP     string
 	}
 	resp := &respStruct{}
 	err := c.BindJSON(resp)
@@ -143,7 +148,7 @@ func (ws *Webserver) configureEthernetIP(c *gin.Context) error {
 		return err
 	}
 
-	err = ws.ap.EnsureEthernetStaticIP(resp.IP, resp.Gateway, resp.DNS1, resp.DNS2)
+	err = ws.ap.EnsureEthernetStaticIP(resp.IP, resp.Gateway, resp.DNS1, resp.DNS2, resp.NTP)
 
 	if err != nil {
 		return err

@@ -2,6 +2,15 @@
 <html lang="en">
 	<head>
 		<meta name="viewport" content="width=device-width, initial-scale=1.0">
+		<style>
+			div.settings {
+				display:grid;
+				grid-template-columns: max-content max-content;
+				grid-gap:5px;
+			}
+			div.settings label       { text-align:right; }
+			#div.settings label:after { content: ":"; }
+		</style>
 	</head>
 	<body style="padding-left:25px" onload="checkConnected()">
 		<script>
@@ -17,7 +26,7 @@
 					document.getElementById("error").innerHTML = "";
 
 					if(data.ssid !== ""){
-						document.getElementById("h1").innerHTML = "Connected to: "+ data.ssid;
+						document.getElementById("h1").innerHTML = "Connected to wifi: "+ data.ssid;
 					}
 
 					var temp = '';
@@ -37,7 +46,7 @@
 							let button = '';
 							if(x.static){
 								button = "<button style=\"margin-right:10px;\" onclick=\"event.preventDefault();promptSetEthernetIP('"+x2+"');\">Change static IP</button>";
-								button += "<button onclick=\"event.preventDefault();setEthernetIP('', '', '', '');\">Switch to DHCP</button>";
+								button += "<button onclick=\"event.preventDefault();setEthernetIP('', '', '', '', '');\">Switch to DHCP</button>";
 							}
 							temp += "<td>"+button+"</td>";
 							temp += "</tr>"
@@ -59,9 +68,10 @@
 				const gateway = document.getElementById('gateway').value;
 				const dns1 = document.getElementById('dns1').value;
 				const dns2 = document.getElementById('dns2').value;
-				setEthernetIP(ip, gateway, dns1, dns2);
+				const ntp = document.getElementById('ntp').value;
+				setEthernetIP(ip, gateway, dns1, dns2, ntp);
 			}
-			const setEthernetIP = async (ip, gateway, dns1, dns2) =>  {
+			const setEthernetIP = async (ip, gateway, dns1, dns2, ntp) =>  {
 				let options = {
 					method: "POST",
 					headers: {
@@ -72,6 +82,7 @@
 						gateway: gateway,
 						dns1: dns1,
 						dns2: dns2,
+						ntp: ntp,
 					})
 				}
 				const response = await fetch("/api/ethernet-v1", options);
@@ -146,22 +157,28 @@
 			</table>
 		</div>
 		<form style="display:none;" method="post" action="/test" id="connectForm">
-			<label for="ssid">SSID:</label><br>
-			<input type="text" id="ssid" name="ssid"><br>
-			<label for="psk">Password:</label><br>
-			<input type="text" id="psk" name="psk"><br><br>
-			<input value="Connect" type="submit" onclick="event.preventDefault();connect();">
+			<div class="settings">
+				<label for="ssid">SSID</label>
+				<input type="text" id="ssid" name="ssid">
+				<label for="psk">Password</label>
+				<input type="text" id="psk" name="psk"><br>
+				<input value="Connect" type="submit" onclick="event.preventDefault();connect();">
+			</div>
 		</form>
 		<form style="display:none;" method="post" action="/test" id="staticIpForm">
-			<label for="ip">ip:</label><br>
-			<input type="text" id="ip" name="ip"><br>
-			<label for="gateway">Gateway:</label><br>
-			<input type="text" id="gateway" name="gateway"><br><br>
-			<label for="dns1">DNS1:</label><br>
-			<input type="text" id="dns1" name="dns1"><br><br>
-			<label for="dns2">DNS2:</label><br>
-			<input type="text" id="dns2" name="dns2"><br><br>
-			<input value="Save IP configuration" type="submit" onclick="event.preventDefault();saveIP();">
+			<div class="settings">
+				<label for="ip">IP</label>
+				<input type="text" id="ip" name="ip">
+				<label for="gateway">Gateway</label>
+				<input type="text" id="gateway" name="gateway">
+				<label for="dns1">DNS1</label>
+				<input type="text" id="dns1" name="dns1">
+				<label for="dns2">DNS2</label>
+				<input type="text" id="dns2" name="dns2">
+				<label for="dns2">NTP</label>
+				<input type="text" id="ntp" name="ntp"><br>
+				<input value="Save IP configuration" type="submit" onclick="event.preventDefault();saveIP();">
+			</div>
 		</form>
 		<button style="margin-top:20px;" onclick="event.preventDefault();scan();">Scan for wifi networks</button>
 		<div style="padding-top:10px" >
