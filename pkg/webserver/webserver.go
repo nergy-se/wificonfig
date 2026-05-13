@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net"
 	"net/http"
 	"os"
 	"time"
@@ -60,7 +59,7 @@ func (ws *Webserver) Init() *gin.Engine {
 	})
 	router.GET("/api/scan-v1", err(ws.scan))
 	router.GET("/api/status-v1", err(func(c *gin.Context) error {
-		interfaces, err := net.Interfaces()
+		networkctlData, err := ws.ap.NetworkctlList()
 		if err != nil {
 			return err
 		}
@@ -70,45 +69,67 @@ func (ws *Webserver) Init() *gin.Engine {
 			Ethernet bool     `json:"ethernet"`
 			Static   bool     `json:"static"`
 			IPs      []string `json:"ips"`
+			Gateway  string   `json:"gateway"`
+			DNS      []string `json:"dns"`
+			NTP      []string `json:"ntp"`
 		}
 
-		//TODO add more info about static config? perhaps all info is from networkctl status --json short
-		// ADD info about: DNS1 DNS2 NTP GATEWAY
-		// gatway is in ROUTES key with destination 0.0.0.0
-		// DNS is in interfaces list key "DNS"
-		// NTP s in NTP.Server key
 		list := []*Interface{}
 
-		for _, i := range interfaces {
-			if i.Flags&net.FlagLoopback != 0 {
-				continue // skip loopback
+		for _, i := range networkctlData.Interfaces {
+			if i.Type == "loopback" {
+				continue
 			}
 
-			iface := &Interface{Name: i.Name, Ethernet: i.Name == ws.ap.EthernetInterfaceName}
-			if i.Name == ws.ap.EthernetInterfaceName {
-				iface.Ethernet = true
+			isEthernet := i.Name == ws.ap.EthernetInterfaceName
+			iface := &Interface{
+				Name:     i.Name,
+				Ethernet: isEthernet,
+				IPs:      []string{},
+				DNS:      []string{},
+				NTP:      []string{},
+			}
+
+			if isEthernet {
 				_, err := os.Stat(ws.wiredStaticConfigLocation)
 				if err == nil {
 					iface.Static = true
 				}
 			}
-			addrs, err := i.Addrs()
-			if err != nil {
-				return err
+
+			for _, addr := range i.Addresses {
+				if cidr := addr.IPv4CIDR(); cidr != "" {
+					iface.IPs = append(iface.IPs, cidr)
+				}
 			}
 
-			for _, ad := range addrs {
-				a, _, _ := net.ParseCIDR(ad.String())
-				if a.To4() == nil {
-					continue
+			for _, route := range i.Routes {
+				if route.Family == 2 && route.DestinationPrefixLength == 0 {
+					if gw := route.GatewayIPv4String(); gw != "" {
+						iface.Gateway = gw
+						break
+					}
 				}
-				iface.IPs = append(iface.IPs, ad.String())
 			}
+
+			for _, dns := range i.DNS {
+				if s := dns.IPv4String(); s != "" {
+					iface.DNS = append(iface.DNS, s)
+				}
+			}
+
+			for _, ntp := range i.NTP {
+				if ntp.Server != "" {
+					iface.NTP = append(iface.NTP, ntp.Server)
+				}
+			}
+
 			list = append(list, iface)
 		}
+
 		ssid, err := ws.ap.GetConnectedSSID()
 		if err != nil {
-			logrus.Error(err) // TODO check if we can return here
+			logrus.Error(err)
 		}
 
 		c.JSON(http.StatusOK, gin.H{

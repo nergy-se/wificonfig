@@ -14,6 +14,7 @@
 	</head>
 	<body style="padding-left:25px" onload="checkConnected()">
 		<script>
+			let statusInterfaces = [];
 			const checkConnected = async () => {
 				try {
 					const response = await fetch('/api/status-v1');
@@ -24,6 +25,7 @@
 						return;
 					}
 					document.getElementById("error").innerHTML = "";
+					statusInterfaces = data.interfaces || [];
 
 					if(data.ssid !== ""){
 						document.getElementById("h1").innerHTML = "Connected to wifi: "+ data.ssid;
@@ -35,7 +37,7 @@
 							temp += "<tr>";
 							temp += "<td>" + x.name + "</td>";
 							temp += "<td>&lt;no address&gt;</td>";
-							temp += "<td>" + ( x.ethernet ? "<button onclick=\"event.preventDefault();promptSetEthernetIP('');\">Configure static IP</button>" : '' ) + "</td>";
+							temp += "<td>" + ( x.ethernet ? "<button onclick=\"event.preventDefault();promptSetEthernetIP('"+x.name+"', '');\">Configure static IP</button>" : '' ) + "</td>";
 							temp += "</tr>"
 							return;
 						}
@@ -45,7 +47,7 @@
 							temp += "<td>" + x2 + "</td>";
 							let button = '';
 							if(x.static){
-								button = "<button style=\"margin-right:10px;\" onclick=\"event.preventDefault();promptSetEthernetIP('"+x2+"');\">Change static IP</button>";
+								button = "<button style=\"margin-right:10px;\" onclick=\"event.preventDefault();promptSetEthernetIP('"+x.name+"', '"+x2+"');\">Change static IP</button>";
 								button += "<button onclick=\"event.preventDefault();setEthernetIP('', '', '', '', '');\">Switch to DHCP</button>";
 							}
 							temp += "<td>"+button+"</td>";
@@ -59,8 +61,13 @@
 					console.error(error);
 				}
 			}
-			const promptSetEthernetIP = (ip) =>  {
-				document.getElementById('ip').value=ip;
+			const promptSetEthernetIP = (name, ip) =>  {
+				const iface = statusInterfaces.find(i => i.name === name) || {};
+				document.getElementById('ip').value = ip;
+				document.getElementById('gateway').value = iface.gateway || '';
+				document.getElementById('dns1').value = (iface.dns && iface.dns[0]) || '';
+				document.getElementById('dns2').value = (iface.dns && iface.dns[1]) || '';
+				document.getElementById('ntp').value = (iface.ntp && iface.ntp[0]) || '';
 				document.getElementById('staticIpForm').style.display = 'block';
 			}
 			const saveIP = () =>  {
