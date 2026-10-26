@@ -35,6 +35,10 @@ type Ap struct {
 
 	mutex             sync.Mutex
 	lastManualConnect time.Time
+
+	// wpaMu keeps LeaveAP from reloading the config in the middle of ConnectToNetwork,
+	// since the webserver and the reconcile loop run them from different goroutines.
+	wpaMu sync.Mutex
 }
 
 func New(c *cli.Context) *Ap {
@@ -217,6 +221,9 @@ func (a *Ap) LastManualConnect() time.Time {
 }
 
 func (a *Ap) ConnectToNetwork(ssid, key string) error {
+	a.wpaMu.Lock()
+	defer a.wpaMu.Unlock()
+
 	a.mutex.Lock()
 	a.lastManualConnect = time.Now()
 	a.mutex.Unlock()
@@ -356,6 +363,22 @@ func (a *Ap) ConfiguredSSIDVisible() (bool, error) {
 		}
 	}
 	return false, nil
+}
+
+// LeaveAP stops dnsmasq and reloads the config, so wpa_supplicant picks a station network if it finds one.
+// It reports false and does nothing if a network was submitted from the setup page after seen.
+func (a *Ap) LeaveAP(seen time.Time) (bool, error) {
+	a.wpaMu.Lock()
+	defer a.wpaMu.Unlock()
+	if a.LastManualConnect().After(seen) {
+		return false, nil
+	}
+	err := a.StopDnsmasq()
+	if err != nil {
+		return false, err
+	}
+	_, err = commands.Run("wpa_cli", "-i", "wlan0", "reconfigure")
+	return err == nil, err
 }
 
 func (a *Ap) WpaIsAp() (bool, error) {

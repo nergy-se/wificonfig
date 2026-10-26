@@ -271,7 +271,8 @@ func (a *App) retryStation() error {
 		a.apSince = now
 	}
 	// Give the setup page time to be used, both after we became AP and after a submitted network.
-	if now.Sub(a.apSince) < a.apRetryInterval || now.Sub(a.ap.LastManualConnect()) < a.apRetryInterval {
+	manual := a.ap.LastManualConnect()
+	if now.Sub(a.apSince) < a.apRetryInterval || now.Sub(manual) < a.apRetryInterval {
 		return nil
 	}
 	a.apSince = now
@@ -280,12 +281,11 @@ func (a *App) retryStation() error {
 	if err != nil || !visible {
 		return err
 	}
-	logrus.Info("configured wifi is visible, leaving AP mode")
-	err = a.ap.StopDnsmasq()
-	if err != nil {
-		return err
+	// LeaveAP skips if a network was submitted from the setup page during the scan.
+	left, err := a.ap.LeaveAP(manual)
+	if left {
+		logrus.Info("configured wifi is visible, leaving AP mode")
 	}
-	_, err = commands.Run("wpa_cli", "-i", "wlan0", "reconfigure")
 	return err
 }
 
