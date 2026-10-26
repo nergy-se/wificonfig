@@ -34,6 +34,11 @@ type App struct {
 	apssid                    string
 	appsk                     string
 	wiredStaticConfigLocation string
+
+	// apRetryInterval is how often we look for the configured wifi while in AP mode.
+	apRetryInterval time.Duration
+	// apSince is when we last became AP or last tried to leave AP mode, zero when we are not AP.
+	apSince time.Time
 }
 
 func NewApp(c *cli.Context, ws *webserver.Webserver, ap *ap.Ap) *App {
@@ -48,6 +53,7 @@ func NewApp(c *cli.Context, ws *webserver.Webserver, ap *ap.Ap) *App {
 		appsk:                     c.String("ap-psk"),
 		wpaSupplicantConfigFile:   c.String("wpa-supplicant-config"),
 		wiredStaticConfigLocation: c.String("wired-static-config-location"),
+		apRetryInterval:           c.Duration("ap-retry-interval"),
 	}
 }
 
@@ -194,6 +200,7 @@ func (a *App) reconcile(ctx context.Context) error {
 	}
 
 	if alive && activeInt != nil && activeInt.Name == a.EthernetInterfaceName { // ethernet connected and alive
+		a.apSince = time.Time{}
 		err := a.ap.StopDnsmasq()
 		if err != nil {
 			return err
@@ -218,6 +225,7 @@ func (a *App) reconcile(ctx context.Context) error {
 	}
 
 	if isConnectedWifi { // we are connectd to wifi station.
+		a.apSince = time.Time{}
 		err := a.ap.StopDnsmasq()
 		if err != nil {
 			return err
@@ -244,10 +252,41 @@ func (a *App) reconcile(ctx context.Context) error {
 			return err
 		}
 		_, err = commands.Run("ifconfig", "wlan0", a.IP)
-		return err
+		if err != nil {
+			return err
+		}
+		return a.retryStation()
 	}
 
 	return nil
+}
+
+// retryStation leaves AP mode when a configured wifi is visible again. wpa_supplicant never
+// scans for it while it is an AP, so without this we would stay an AP until someone uses the setup page.
+// reconfigure reloads the config file, so wpa_supplicant picks the station network if it is found
+// and falls back to the AP otherwise (or if connecting fails, for example a changed PSK).
+func (a *App) retryStation() error {
+	now := time.Now()
+	if a.apSince.IsZero() {
+		a.apSince = now
+	}
+	// Give the setup page time to be used, both after we became AP and after a submitted network.
+	if now.Sub(a.apSince) < a.apRetryInterval || now.Sub(a.ap.LastManualConnect()) < a.apRetryInterval {
+		return nil
+	}
+	a.apSince = now
+
+	visible, err := a.ap.ConfiguredSSIDVisible()
+	if err != nil || !visible {
+		return err
+	}
+	logrus.Info("configured wifi is visible, leaving AP mode")
+	err = a.ap.StopDnsmasq()
+	if err != nil {
+		return err
+	}
+	_, err = commands.Run("wpa_cli", "-i", "wlan0", "reconfigure")
+	return err
 }
 
 func GetActiveInterface() (*net.Interface, net.IP, error) {
