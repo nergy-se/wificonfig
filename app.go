@@ -34,6 +34,11 @@ type App struct {
 	apssid                    string
 	appsk                     string
 	wiredStaticConfigLocation string
+
+	// apRetryInterval is how often we look for the configured wifi while in AP mode.
+	apRetryInterval time.Duration
+	// apSince is when we last became AP or last tried to leave AP mode, zero when we are not AP.
+	apSince time.Time
 }
 
 func NewApp(c *cli.Context, ws *webserver.Webserver, ap *ap.Ap) *App {
@@ -48,6 +53,7 @@ func NewApp(c *cli.Context, ws *webserver.Webserver, ap *ap.Ap) *App {
 		appsk:                     c.String("ap-psk"),
 		wpaSupplicantConfigFile:   c.String("wpa-supplicant-config"),
 		wiredStaticConfigLocation: c.String("wired-static-config-location"),
+		apRetryInterval:           c.Duration("ap-retry-interval"),
 	}
 }
 
@@ -112,6 +118,11 @@ func (a *App) tickerLoop(ctx context.Context, d time.Duration) {
 	for {
 		select {
 		case <-ticker.C:
+			err := a.reconcile(ctx)
+			if err != nil {
+				logrus.Error(err)
+			}
+		case <-a.ap.Connected():
 			err := a.reconcile(ctx)
 			if err != nil {
 				logrus.Error(err)
@@ -194,6 +205,7 @@ func (a *App) reconcile(ctx context.Context) error {
 	}
 
 	if alive && activeInt != nil && activeInt.Name == a.EthernetInterfaceName { // ethernet connected and alive
+		a.apSince = time.Time{}
 		err := a.ap.StopDnsmasq()
 		if err != nil {
 			return err
@@ -218,6 +230,7 @@ func (a *App) reconcile(ctx context.Context) error {
 	}
 
 	if isConnectedWifi { // we are connectd to wifi station.
+		a.apSince = time.Time{}
 		err := a.ap.StopDnsmasq()
 		if err != nil {
 			return err
@@ -244,10 +257,41 @@ func (a *App) reconcile(ctx context.Context) error {
 			return err
 		}
 		_, err = commands.Run("ifconfig", "wlan0", a.IP)
-		return err
+		if err != nil {
+			return err
+		}
+		return a.retryStation()
 	}
 
 	return nil
+}
+
+// retryStation leaves AP mode when a configured wifi is visible again. wpa_supplicant never
+// scans for it while it is an AP, so without this we would stay an AP until someone uses the setup page.
+// reconfigure reloads the config file, so wpa_supplicant picks the station network if it is found
+// and falls back to the AP otherwise (or if connecting fails, for example a changed PSK).
+func (a *App) retryStation() error {
+	now := time.Now()
+	if a.apSince.IsZero() {
+		a.apSince = now
+	}
+	// Give the setup page time to be used, both after we became AP and after a submitted network.
+	manual := a.ap.LastManualConnect()
+	if now.Sub(a.apSince) < a.apRetryInterval || now.Sub(manual) < a.apRetryInterval {
+		return nil
+	}
+	a.apSince = now
+
+	visible, err := a.ap.ConfiguredSSIDVisible()
+	if err != nil || !visible {
+		return err
+	}
+	// LeaveAP skips if a network was submitted from the setup page during the scan.
+	left, err := a.ap.LeaveAP(manual)
+	if left {
+		logrus.Info("configured wifi is visible, leaving AP mode")
+	}
+	return err
 }
 
 func GetActiveInterface() (*net.Interface, net.IP, error) {
@@ -295,7 +339,17 @@ func GetOutboundIP() (net.IP, error) {
 }
 
 var aliveClient = &http.Client{
-	Timeout: time.Second * 10,
+	Timeout:   time.Second * 10,
+	Transport: newAliveTransport(),
+}
+
+// newAliveTransport does not keep connections between checks. A kept connection made over
+// an interface that is gone (wifi after switching to ethernet) times out every check until
+// the kernel gives up on it, about 15 minutes later.
+func newAliveTransport() *http.Transport {
+	t := http.DefaultTransport.(*http.Transport).Clone()
+	t.DisableKeepAlives = true
+	return t
 }
 
 func (a *App) checkAlive() (bool, error) {
@@ -303,6 +357,7 @@ func (a *App) checkAlive() (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	defer r.Body.Close()
 
 	return r.StatusCode == 200, nil
 }

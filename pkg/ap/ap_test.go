@@ -1,5 +1,7 @@
 package ap
 
+import "testing"
+
 var scanResultString = `bssid / frequency / signal level / flags / ssid
 18:e8:29:c2:8f:84	5180	-63	[WPA2-PSK-CCMP][ESS]	Hokage5
 1e:e8:29:c2:8f:84	5180	-63	[WPA2-PSK-CCMP][ESS]	chromecast
@@ -16,3 +18,15 @@ var scanResultString = `bssid / frequency / signal level / flags / ssid
 1e:e8:29:c1:8f:84	2412	-68	[WPA2-PSK-CCMP][ESS]	hguest
 18:e8:29:c1:8f:84	2412	-71	[WPA2-PSK-CCMP][ESS]	Hokage24
 `
+
+func TestParseScanResults(t *testing.T) {
+	out := scanResultString + "aa:bb:cc:dd:ee:ff\t2412\t-70\t[WPA2-PSK-CCMP][ESS]\tmy home wifi\n" +
+		"aa:bb:cc:dd:ee:00\t2412\t-70\t[WPA2-PSK-CCMP][ESS]\t\n"
+	networks := parseScanResults(out)
+	if len(networks) != 15 {
+		t.Fatalf("expected 15 networks, got %d", len(networks))
+	}
+	if networks[0].Ssid != "Hokage5" || networks[14].Ssid != "my home wifi" {
+		t.Errorf("unexpected ssids: %q %q", networks[0].Ssid, networks[14].Ssid)
+	}
+}

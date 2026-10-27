@@ -94,6 +94,11 @@ func app() *cli.App {
 			Usage: "ethernet interface name",
 		},
 		&cli.DurationFlag{
+			Name:  "ap-retry-interval",
+			Value: time.Minute * 10,
+			Usage: "how often to look for the configured wifi while in AP mode",
+		},
+		&cli.DurationFlag{
 			Name:  "check-interval",
 			Value: time.Second * 30,
 			Usage: "check interval",

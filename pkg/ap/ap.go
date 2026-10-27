@@ -31,8 +31,17 @@ type Ap struct {
 	dhcpEnd                   string
 	EthernetInterfaceName     string
 	wiredStaticConfigLocation string
+	apSSID                    string
 
-	mutex sync.Mutex
+	mutex             sync.Mutex
+	lastManualConnect time.Time
+
+	// wpaMu keeps LeaveAP from reloading the config in the middle of ConnectToNetwork,
+	// since the webserver and the reconcile loop run them from different goroutines.
+	wpaMu sync.Mutex
+
+	// connected gets a value when wpa_supplicant reports it is connected, as station or AP.
+	connected chan struct{}
 }
 
 func New(c *cli.Context) *Ap {
@@ -43,7 +52,15 @@ func New(c *cli.Context) *Ap {
 		dhcpStart:                 c.String("dhcp-start"),
 		dhcpEnd:                   c.String("dhcp-end"),
 		wiredStaticConfigLocation: c.String("wired-static-config-location"),
+		apSSID:                    c.String("ap-ssid"),
+		connected:                 make(chan struct{}, 1),
 	}
+}
+
+// Connected returns a channel that gets a value when wpa_supplicant has connected to a station
+// network or started our AP, so reconcile can set up DHCP without waiting for the next check.
+func (a *Ap) Connected() <-chan struct{} {
+	return a.connected
 }
 
 func (a *Ap) StopDnsmasq() error {
@@ -56,8 +73,7 @@ func (a *Ap) StopDnsmasq() error {
 
 func (a *Ap) StartDnsmasq(ctx context.Context) error {
 	if cmd := a.DnsMasqCmd(); cmd != nil {
-		err := a.StopDnsmasq()
-		return err
+		return nil // already running
 	}
 	args := []string{
 		"--no-hosts", // Don't read the hostnames in /etc/hosts.
@@ -135,6 +151,12 @@ func (a *Ap) StartWpaSupplicant(ctx context.Context) error {
 	go func() {
 		for scanner.Scan() {
 			logrus.Infof("wpa_supplicant said: %s\n", scanner.Text())
+			if strings.Contains(scanner.Text(), "CTRL-EVENT-CONNECTED") { // also logged when our AP is enabled
+				select {
+				case a.connected <- struct{}{}:
+				default: // a reconcile is already pending
+				}
+			}
 		}
 	}()
 	err = cmd.Start()
@@ -207,7 +229,20 @@ func (a *Ap) EnsureWpaNetworkAdded() (string, error) {
 	return "", nil
 }
 
+// LastManualConnect returns when a network was last submitted from the setup page.
+func (a *Ap) LastManualConnect() time.Time {
+	a.mutex.Lock()
+	defer a.mutex.Unlock()
+	return a.lastManualConnect
+}
+
 func (a *Ap) ConnectToNetwork(ssid, key string) error {
+	a.wpaMu.Lock()
+	defer a.wpaMu.Unlock()
+
+	a.mutex.Lock()
+	a.lastManualConnect = time.Now()
+	a.mutex.Unlock()
 
 	net, err := a.EnsureWpaNetworkAdded()
 	if err != nil {
@@ -268,6 +303,10 @@ type WpaNetwork struct {
 }
 
 func (a *Ap) ScanNetworks() ([]*WpaNetwork, error) {
+	return a.scanNetworks(1 * time.Second)
+}
+
+func (a *Ap) scanNetworks(wait time.Duration) ([]*WpaNetwork, error) {
 
 	wpaNetworks := []*WpaNetwork{}
 
@@ -279,33 +318,86 @@ func (a *Ap) ScanNetworks() ([]*WpaNetwork, error) {
 	if scanOut != "OK" {
 		return wpaNetworks, fmt.Errorf("expected OK from wpa_cli scan got: %s", scanOut)
 	}
-	time.Sleep(1 * time.Second)
+	time.Sleep(wait)
 	networkListOut, err := commands.Run("wpa_cli", "-i", "wlan0", "scan_results")
 	if err != nil {
 		return wpaNetworks, err
 	}
 
-	tmp := strings.Split(string(networkListOut), "\n")
+	return parseScanResults(networkListOut), nil
+}
+
+func parseScanResults(out string) []*WpaNetwork {
+	wpaNetworks := []*WpaNetwork{}
+	tmp := strings.Split(out, "\n")
 	for _, netRecord := range tmp[1:] {
 		if strings.Contains(netRecord, "[P2P]") {
 			continue
 		}
 
-		fields := strings.Fields(netRecord)
+		fields := strings.Split(netRecord, "\t") // split on tabs so SSIDs are kept exactly (Fields collapses whitespace)
 
-		if len(fields) > 4 {
-			ssid := strings.Join(fields[4:], " ")
+		if len(fields) > 4 && fields[4] != "" { // hidden networks have no SSID
 			wpaNetworks = append(wpaNetworks, &WpaNetwork{
 				Bssid:       fields[0],
 				Frequency:   fields[1],
 				SignalLevel: fields[2],
 				Flags:       fields[3],
-				Ssid:        ssid,
+				Ssid:        fields[4],
 			})
 		}
 	}
 
-	return wpaNetworks, nil
+	return wpaNetworks
+}
+
+// ConfiguredSSIDVisible scans and reports if any configured station network (all except our own AP) is visible.
+// wpa_supplicant does not scan for station networks itself while it is an AP.
+func (a *Ap) ConfiguredSSIDVisible() (bool, error) {
+	listOut, err := commands.Run("wpa_cli", "-i", "wlan0", "list_networks")
+	if err != nil {
+		return false, err
+	}
+	configured := map[string]bool{}
+	for _, row := range strings.Split(listOut, "\n")[1:] {
+		fields := strings.Split(row, "\t")
+		if len(fields) > 1 && fields[1] != a.apSSID {
+			configured[fields[1]] = true
+		}
+	}
+	if len(configured) == 0 {
+		return false, nil
+	}
+
+	networks, err := a.scanNetworks(5 * time.Second) // scanning takes longer in AP mode
+	if err != nil {
+		return false, err
+	}
+	for _, n := range networks {
+		if configured[n.Ssid] {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// LeaveAP stops dnsmasq and reloads the config, so wpa_supplicant picks a station network if it finds one.
+// It reports false and does nothing if a network was submitted from the setup page after seen.
+func (a *Ap) LeaveAP(seen time.Time) (bool, error) {
+	a.wpaMu.Lock()
+	defer a.wpaMu.Unlock()
+	if a.LastManualConnect().After(seen) {
+		return false, nil
+	}
+	err := a.StopDnsmasq()
+	if err != nil {
+		return false, err
+	}
+	out, err := commands.Run("wpa_cli", "-i", "wlan0", "reconfigure")
+	if err == nil && out != "OK" { // wpa_cli exits 0 also when the command fails
+		err = fmt.Errorf("expected OK from wpa_cli reconfigure got: %s", out)
+	}
+	return err == nil, err
 }
 
 func (a *Ap) WpaIsAp() (bool, error) {
