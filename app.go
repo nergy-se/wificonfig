@@ -339,7 +339,17 @@ func GetOutboundIP() (net.IP, error) {
 }
 
 var aliveClient = &http.Client{
-	Timeout: time.Second * 10,
+	Timeout:   time.Second * 10,
+	Transport: newAliveTransport(),
+}
+
+// newAliveTransport does not keep connections between checks. A kept connection made over
+// an interface that is gone (wifi after switching to ethernet) times out every check until
+// the kernel gives up on it, about 15 minutes later.
+func newAliveTransport() *http.Transport {
+	t := http.DefaultTransport.(*http.Transport).Clone()
+	t.DisableKeepAlives = true
+	return t
 }
 
 func (a *App) checkAlive() (bool, error) {
@@ -347,6 +357,7 @@ func (a *App) checkAlive() (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	defer r.Body.Close()
 
 	return r.StatusCode == 200, nil
 }
