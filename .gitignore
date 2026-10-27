@@ -22,3 +22,4 @@ go.work
 
 wificonfig-linux-arm
 wificonfig-linux-amd64
+wificonfig-linux-arm64

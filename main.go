@@ -16,7 +16,7 @@ import (
 )
 
 var (
-	// TODO set on build
+	// Set by the release workflow with -ldflags -X
 	Version     = "dev"
 	BuildTime   = ""
 	BuildCommit = ""

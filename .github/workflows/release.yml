@@ -1,0 +1,48 @@
+# Publishes the wificonfig binary consumed by nergy-se/controllerimage.
+# The Yocto image installs this prebuilt static binary and verifies the
+# .sha256 instead of compiling wificonfig with poky's Go toolchain.
+
+name: Release
+
+on:
+  push:
+    tags: [ "v*" ]
+
+permissions:
+  contents: write
+
+jobs:
+
+  release:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version-file: go.mod
+
+    - name: Test
+      run: go test ./...
+
+    - name: Build wificonfig-linux-arm64
+      env:
+        GOOS: linux
+        GOARCH: arm64
+        CGO_ENABLED: "0"
+      run: |
+        go build -trimpath \
+          -ldflags "-X main.Version=${GITHUB_REF_NAME} -X main.BuildCommit=${GITHUB_SHA} -X main.BuildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+          -o wificonfig-linux-arm64 .
+        sha256sum wificonfig-linux-arm64 > wificonfig-linux-arm64.sha256
+        cat wificonfig-linux-arm64.sha256
+
+    - name: Create GitHub release
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        gh release create "$GITHUB_REF_NAME" \
+          wificonfig-linux-arm64 wificonfig-linux-arm64.sha256 \
+          --title "$GITHUB_REF_NAME" \
+          --notes "wificonfig built from ${GITHUB_SHA}. sha256: $(cut -d' ' -f1 wificonfig-linux-arm64.sha256)"
