@@ -377,7 +377,10 @@ func (a *Ap) LeaveAP(seen time.Time) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	_, err = commands.Run("wpa_cli", "-i", "wlan0", "reconfigure")
+	out, err := commands.Run("wpa_cli", "-i", "wlan0", "reconfigure")
+	if err == nil && out != "OK" { // wpa_cli exits 0 also when the command fails
+		err = fmt.Errorf("expected OK from wpa_cli reconfigure got: %s", out)
+	}
 	return err == nil, err
 }
 
