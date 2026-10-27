@@ -39,6 +39,9 @@ type Ap struct {
 	// wpaMu keeps LeaveAP from reloading the config in the middle of ConnectToNetwork,
 	// since the webserver and the reconcile loop run them from different goroutines.
 	wpaMu sync.Mutex
+
+	// connected gets a value when wpa_supplicant reports it is connected, as station or AP.
+	connected chan struct{}
 }
 
 func New(c *cli.Context) *Ap {
@@ -50,7 +53,14 @@ func New(c *cli.Context) *Ap {
 		dhcpEnd:                   c.String("dhcp-end"),
 		wiredStaticConfigLocation: c.String("wired-static-config-location"),
 		apSSID:                    c.String("ap-ssid"),
+		connected:                 make(chan struct{}, 1),
 	}
+}
+
+// Connected returns a channel that gets a value when wpa_supplicant has connected to a station
+// network or started our AP, so reconcile can set up DHCP without waiting for the next check.
+func (a *Ap) Connected() <-chan struct{} {
+	return a.connected
 }
 
 func (a *Ap) StopDnsmasq() error {
@@ -141,6 +151,12 @@ func (a *Ap) StartWpaSupplicant(ctx context.Context) error {
 	go func() {
 		for scanner.Scan() {
 			logrus.Infof("wpa_supplicant said: %s\n", scanner.Text())
+			if strings.Contains(scanner.Text(), "CTRL-EVENT-CONNECTED") { // also logged when our AP is enabled
+				select {
+				case a.connected <- struct{}{}:
+				default: // a reconcile is already pending
+				}
+			}
 		}
 	}()
 	err = cmd.Start()

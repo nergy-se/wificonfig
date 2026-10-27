@@ -122,6 +122,11 @@ func (a *App) tickerLoop(ctx context.Context, d time.Duration) {
 			if err != nil {
 				logrus.Error(err)
 			}
+		case <-a.ap.Connected():
+			err := a.reconcile(ctx)
+			if err != nil {
+				logrus.Error(err)
+			}
 
 		case <-ctx.Done():
 			ticker.Stop()
